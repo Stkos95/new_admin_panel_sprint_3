@@ -1,0 +1,22 @@
+services:
+  postgres:
+    container_name: 'postgres'
+    image: postgres:latest
+    ports:
+      - 5432:5432
+    volumes:
+      - ./database_dump.sql:/docker-entrypoint-initdb.d/database_dump.sql
+    environment:
+      - POSTGRES_PASSWORD=123
+      - POSTGRES_USER=postgres
+      - POSTGRES_DB=postgres
+
+  elasticsearch:
+    container_name: elastic
+    image: elasticsearch:7.5.2
+    environment:
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+      - discovery.type=single-node
+    ports:
+      - 9200:9200
+  
