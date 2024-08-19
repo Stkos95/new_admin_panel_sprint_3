@@ -1,5 +1,5 @@
 import psycopg
-# from abc.
+from abc import ABC, abstractmethod
 import os
 from dotenv import load_dotenv
 from state import State, JsonStorage, backoff
@@ -11,12 +11,42 @@ def get_pg_connection(self):
     pass
 
 
+class Database:
+
+    def __init__(self, pg_data):
+        self.db_data = pg_data
+            
+    @backoff()
+    def make_query(self, **kwargs):
+        print('heeey')
 
 
-class DbBase:
+class BaseExtractor(ABC):
 
-    def __init__(self, **kwargs):
-        self.db_data = kwargs
+    def __init__(self, db: Database):
+        pass
+
+    @abstractmethod
+    def extract_data(self):
+        pass
+
+class ExtractFilmWork(BaseExtractor):
+    pass
+
+class ExtractPerson(BaseExtractor):
+    pass
+
+class ExtractGenre(BaseExtractor):
+    pass
+
+
+
+
+
+# class Database:
+
+#     def __init__(self, **kwargs):
+#         self.db_data = kwargs
             
 
 
@@ -83,13 +113,15 @@ class EtlProcess:
     def start(self):
         pass
 
+dsn = {}
 
+d = Database(dsn)
+d.make_query(d.db_data)
 
-
-if __name__ == '__main__':
-    print(dsn)
-    d = PGextractor(dsn)
-    with d.get_connection(dsn) as c:
-        print('aaa')
+# if __name__ == '__main__':
+#     print(dsn)
+#     d = PGextractor(dsn)
+#     with d.get_connection(dsn) as c:
+#         print('aaa')
 
 

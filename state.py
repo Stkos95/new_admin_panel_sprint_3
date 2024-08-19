@@ -3,7 +3,10 @@ import time
 from typing import Any, Dict
 from abc import ABC, abstractmethod
 from functools import wraps
+import psycopg
 
+
+dsn = {}
 class BaseStorage(ABC):
 
     @abstractmethod
@@ -44,6 +47,7 @@ def backoff(start_sleep_time=0.1, factor=2, border_sleep_time=10):
     def func_wrapper(func):
         @wraps(func)
         def inner(*args, **kwargs):
+            print(args, kwargs)
             logged = False
             t = 0
             counter = 0
@@ -65,3 +69,5 @@ def backoff(start_sleep_time=0.1, factor=2, border_sleep_time=10):
                     time.sleep(t)
         return inner
     return func_wrapper
+
+
