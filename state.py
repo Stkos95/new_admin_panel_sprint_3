@@ -20,15 +20,14 @@ class JsonStorage(BaseStorage):
         self.file_path = file_path
 
     def save_state(self, state: Dict[str, Any]) -> None:
-        with open(self.file_path, 'r') as file:
-            json.dump(file, state)
+        with open(self.file_path, 'w') as file:
+            json.dump(state, file)
 
     def retrieve_state(self) -> Dict[str, Any]:
-        with open(self.file_path, 'w') as file:
+        with open(self.file_path, 'r') as file:
             data = json.load(self.file_path)
         return data
     
-
 class State:
 
     def __init__(self, storage: BaseStorage) -> None:
@@ -41,25 +40,28 @@ class State:
         return self.storage.retrieve_state().get(key, None)
 
 
-def backoff(start_time=0.1, delta=2, max_time_value=15):
-    def decor(func):
-        @wraps
-        def wrapper(*args, **kwargs):
+def backoff(start_sleep_time=0.1, factor=2, border_sleep_time=10):
+    def func_wrapper(func):
+        @wraps(func)
+        def inner(*args, **kwargs):
+            logged = False
+            t = 0
             counter = 0
             while True:
                 try:
-                    conn = func()
-                    return conn
+                    if not logged:
+                        d = psycopg.connect(**dsn)
+                        cur = d.cursor()
+                        logged = True
+                        continue
+                    res = func()
+                    return res
                 except:
-                    counter += start_time * delta ** 2
-                    if counter > max_time_value:
-                        counter = max_time_value
-                    time.sleep(counter)
-                    
-
-
-        return wrapper    
-
-
-    return decor
-
+                    print(f'retry - {t}')
+                    t = start_sleep_time * (factor ** counter) 
+                    if t > border_sleep_time:
+                        t = border_sleep_time
+                    counter += 1
+                    time.sleep(t)
+        return inner
+    return func_wrapper

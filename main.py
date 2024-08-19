@@ -1,22 +1,71 @@
 import psycopg
 # from abc.
-
+import os
+from dotenv import load_dotenv
+from state import State, JsonStorage, backoff
+from psycopg.rows import dict_row
+import datetime
+from contextlib import contextmanager
 
 def get_pg_connection(self):
     pass
 
+
+
+
+class DbBase:
+
+    def __init__(self, **kwargs):
+        self.db_data = kwargs
+            
+
+
 class PGextractor:
 
 
+    def __init__(self, dsn):
+        # self.connection = self.get_connection(dsn)
+        # self.cursor = self.connection.cursor()
+        self.state = State(JsonStorage('hello.json'))
+
+
+    
+
+    @contextmanager
+    @backoff
+    def get_connection(self, dsn):
+        conn = psycopg.connect(**dsn, row_factory=dict_row)
+        try:
+            yield conn.cursor()
+        except:
+            conn.close()
+    
+    # def close_connection(self):
+    #     self.connection.close()
+
     def update_persons(self, offset: int = None):
-        limit = '\nLIMIT 5;'
+        try:
+            start = int(self.state.get_state('shift'))
+        except:
+            start = 0
+
+        limit_num = 5
+        limit = f'\nLIMIT {limit_num};'
         if offset:
             limit = f'\nOFFSET {offset}' + limit
         statement_person = """SELECT * FROM content.person
                             WHERE modified > '1995.05.10'
                             """ + limit
-        print(statement_person)
-        
+        self.cursor.execute(statement_person)
+        data = self.cursor.fetchall()
+        modified_date = str(data[-1]['modified'])
+        print(modified_date)
+        self.state.save_storage('postgres', modified_date)
+        self.state.save_storage('shift', start + limit_num)
+        self.close_connection()
+
+        print(data)
+          
     
     def update_films(self):
         pass
@@ -27,26 +76,20 @@ class PGextractor:
     def connect(self):
         pass
 
-d = PGextractor().update_persons(5)
-# dsn = {
-#     'dbname': 'postgres',
-#     'user': 'postgres',
-#     'password': '123',
-#     'host': '172.18.0.3',
-#     'port': 5432,
-# }
 
-# d = psycopg.connect(**dsn)
+class EtlProcess:
 
-# with psycopg.connect(**dsn) as conn, conn.cursor() as cur:
-#     statement = """SELECT * FROM content.person
-#                     WHERE modified > '1995.05.10'
-#                     LIMIT 1
-#                     ;
-#                     """
-#     cur.execute(statement)
-#     for _ in range(3):
-#         d = cur.fetchall()
     
-#         print(d)
-#         print('---'* 30)
+    def start(self):
+        pass
+
+
+
+
+if __name__ == '__main__':
+    print(dsn)
+    d = PGextractor(dsn)
+    with d.get_connection(dsn) as c:
+        print('aaa')
+
+
