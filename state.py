@@ -27,9 +27,12 @@ class JsonStorage(BaseStorage):
             json.dump(state, file)
 
     def retrieve_state(self) -> Dict[str, Any]:
-        with open(self.file_path, 'r') as file:
-            data = json.load(self.file_path)
-        return data
+        try:
+            with open(self.file_path, 'r') as file:
+                data = json.load(file)
+            return data
+        except FileNotFoundError:
+            return {}
     
 class State:
 
@@ -41,35 +44,6 @@ class State:
     
     def get_storage(self, key: str) -> Any:
         return self.storage.retrieve_state().get(key, None)
-
-
-# def backoff(start_sleep_time=0.1, factor=2, border_sleep_time=10):
-#     def func_wrapper(func):
-#         @wraps(func)
-#         def inner(*args, **kwargs):
-#             print(args, kwargs)
-#             logged = False
-#             t = 0
-#             counter = 0
-#             while True:
-#                 try:
-#                     if not logged:
-#                         d = psycopg.connect(**dsn)
-#                         cur = d.cursor()
-#                         logged = True
-#                         continue
-#                     res = func()
-#                     return res
-#                 except:
-#                     print(f'retry - {t}')
-#                     t = start_sleep_time * (factor ** counter) 
-#                     if t > border_sleep_time:
-#                         t = border_sleep_time
-#                     counter += 1
-#                     time.sleep(t)
-#         return inner
-#     return func_wrapper
-
 
 def backoff(start_sleep_time=0.1, factor=2, border_sleep_time=10):
     def func_wrapper(func):
