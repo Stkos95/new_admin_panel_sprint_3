@@ -71,7 +71,8 @@ class ExtractFilmWork(BaseExtractor):
     pass
 
 class ExtractPerson(BaseExtractor):
-    
+    #TODO: Я пока убрал limit в Запросе на фильмы, можно будет вернуть и вынести в отдельную функцию, в нее передавать людей и чанками получать фильмы для них и обрабатывать, затем переходить к другим людям.
+    #TODO: Нужно добавить дату изменения фильмов при выборке людей, т.к. при переходе к выборке фильмов они будут дублироваться.
     def extract_data(self):
             modified_persons = self._get_persons_from_db(50)
             if not modified_persons:
@@ -89,6 +90,8 @@ class ExtractPerson(BaseExtractor):
                 pass
             return all_data
 
+
+    # def _get_movies_for_persons(self, persons_ids: list):
 
 
 
@@ -116,7 +119,6 @@ class ExtractPerson(BaseExtractor):
                         LEFT JOIN content.person_film_work pfw ON pfw.film_work_id = fw.id
                         WHERE pfw.person_id IN {ids_list}
                         ORDER BY fw.modified
-                        LIMIT 100;
                         """,
             'all_tables': f"""
                         SELECT
@@ -143,10 +145,6 @@ class ExtractPerson(BaseExtractor):
 
 
 
-
-
-
-
 class ExtractGenre(BaseExtractor):
     pass
 
@@ -154,44 +152,67 @@ class ExtractGenre(BaseExtractor):
 class Transform:
     
     def prepare_data(self, data: list):
-        pass
+        result = {}
+        for row in data:
+            current_movie = result.setdefault(str(row['fw_id']), {})
+            if not current_movie:
+                current_movie['title'] = row['title']
+                current_movie['description'] = row['description']
+                current_movie['imdb_rating'] = row['rating']
+                current_movie['genres'] = row['name']
+                current_movie['title'] = row['title']
+                current_movie['description'] = row['description']
+                if row['role'] == 'director':
+                    print('here')
+                    current_movie.setdefault('directors_names', []).append(row['full_name'])
+                    current_movie.setdefault('directors', {}).update(id=str(row['id']), name=row['full_name'])
+                elif row['role'] == 'actor':
+                    current_movie.setdefault('actors_names', []).append(row['full_name'])
+                    current_movie.setdefault('actors', {}).update(id=str(row['id']), name=row['full_name'])
+                elif ['role'] == 'writer':
+                    current_movie.setdefault('writers_names', []).append(row['full_name'])
+                    current_movie.setdefault('writers', {}).update(id=str(row['id']), name=row['full_name'])
+        return result
+                
 
+
+
+from pprint import pprint
 
 
 
 class EtlProcess:
-
+    def __init__(self):
+        self.database = Database(pg_data=dsn)
+        state = State(storage=JsonStorage('hello.json'))
+        self.extractor_person = ExtractPerson(db=self.database, state=state)
+        self.transform = Transform()
+        # extractor_genre = ExtractGenre(db=db, state=state)
+        # extract_filmwork = ExtractFilmWork(db=db,state=state)
     
     def start(self):
-        pass
-    
 
-if __name__ == '__main__':
-    dsn = {
-        'dbname': 'postgres',
-        'user': 'postgres',
-        'password': '123',
-        'host': '172.18.0.3',
-        'port': 5432,
-    }
-    state = State(storage=JsonStorage('hello.json'))
-    db = Database(pg_data=dsn)
-
-    extractor_person = ExtractPerson(db=db, state=state)
-    # extractor_genre = ExtractGenre(db=db, state=state)
-    # extract_filmwork = ExtractFilmWork(db=db,state=state)
-
-    while True:
-
-        try:
-            data = extractor_person.extract_data()
-            print(data[0])
-            db.close_connection()
-            break
+        while True:
             
+            try:
+                data = self.extractor_person.extract_data()
+                # print(data)
+                d = self.transform.prepare_data(data)
+                pprint(d)
+                
 
-        except KeyboardInterrupt:
-            db.close_connection()
+                # print(data[0])
+                break
+
+
+
+
+                self.database.close_connection()
+                
+                
+
+            except KeyboardInterrupt:
+                self.db.close_connection()
 
         # try:
         #     for extractor in [extractor_person, extractor_genre, extract_filmwork]:
@@ -202,6 +223,22 @@ if __name__ == '__main__':
 
         # except KeyboardInterrupt:
         #     db.close_connection()
+
+    
+
+if __name__ == '__main__':
+    dsn = {
+        'dbname': 'postgres',
+        'user': 'postgres',
+        'password': '123',
+        'host': '172.24.0.3',
+        'port': 5432,
+    }
+
+    process = EtlProcess()
+    process.start()
+
+
             
         
 
