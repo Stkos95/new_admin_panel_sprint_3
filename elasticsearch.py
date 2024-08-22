@@ -39,8 +39,8 @@ class ElasticSearchLoader:
             schema = file.read()
         return schema
 
-    def create_index(self, schema: str, index_name: str):
-        url = f'http://127.0.0.1:9200/{index_name}/'
+    def create_index(self, schema: str):
+        url = f'http://127.0.0.1:9200/{self.index}/'
         r = self._send_request('put', url, headers={'Content-Type': 'application/json'}, data=schema)
         if r.get('status') == 400:
             #logger 
@@ -55,8 +55,19 @@ class ElasticSearchLoader:
         return self._send_request('post', url, headers={'Content-Type': 'application/json'}, data=data) 
 
 
+    def batch_insert_data(self, data: dict):
+        url = f'http://127.0.0.1:9200/_bulk?filter_path=items.*.error'
+        prepared_data = self.create_statement_bach_insert(data)
+        return self._send_request('post', url, headers={'Content-Type': 'application/x-ndjson'}, data=prepared_data)
 
-
+    
+    def create_statement_bach_insert(self, data: dict):
+        prepared_data = {}
+        for _id, value in data.items():
+            prepared_data.update({"index":{"_index": self.index, "_id": _id}})
+            prepared_data.update(value)
+        return prepared_data
+            
 
     def _send_request(self, method: str, url: str, **kwargs):
         r = requests.request(method, url, **kwargs)

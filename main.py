@@ -26,6 +26,7 @@ def backoff(start_sleep_time=0.1, factor=2, border_sleep_time=10):
                     res = func(instance, *args, **kwargs)
                     return res
                 except Exception as e:
+                    print(11111)
                     print(e)
                     t = start_sleep_time * (factor ** counter) 
                     if t > border_sleep_time:
@@ -46,6 +47,7 @@ class Database:
             
     @backoff()
     def make_query(self, statement: str, **kwargs):
+                print(statement)
                 cursor = self.conn.cursor()
                 cursor.execute(statement)
                 data = cursor.fetchall()
@@ -75,7 +77,9 @@ class AbstractExtractor(ABC):
 class BaseExtractor(AbstractExtractor):
 
     def _get_movies_data(self, movies_ids: list):
-        statement = """
+        print(movies_ids)
+        movies_ids = '( ' + ', '.join([f"'{mov}'" for mov in movies_ids ]) + ' )'
+        statement = f"""
             SELECT
                 fw.id as fw_id, 
                 fw.title, 
@@ -93,7 +97,7 @@ class BaseExtractor(AbstractExtractor):
             LEFT JOIN content.person p ON p.id = pfw.person_id
             LEFT JOIN content.genre_film_work gfw ON gfw.film_work_id = fw.id
             LEFT JOIN content.genre g ON g.id = gfw.genre_id
-            WHERE fw.id IN {ids_list}; 
+            WHERE fw.id IN {movies_ids}; 
             """
         return self.database.make_query(statement=statement)
     
@@ -102,6 +106,10 @@ class ExtractFilmWork(BaseExtractor):
     pass
 
 class ExtractPerson(BaseExtractor):
+
+    def __init__(self, *args, **kwargs):
+        self.offset = 0
+        super().__init__(*args, **kwargs)
     
     def extract_data(self):
             modified_persons = self._get_persons_from_db(50)
@@ -123,17 +131,20 @@ class ExtractPerson(BaseExtractor):
 
     
     def get_persons_id(self):
-        modified_persons = self._get_persons_from_db(50)
-        modified_persons_id = tuple([person['id'] for person in modified_persons])
+        modified_persons = self._get_persons_from_db(2)
+        print(modified_persons)
+        modified_persons_id = tuple(person['id'] for person in modified_persons)
         return modified_persons_id
 
-    def get_movies_data(self, modified_persons_id):
-        movies = self._get_data_from_db('movies', ids_list=modified_persons_id)
+    def get_movies_data(self, modified_persons_id: list, offset: int = 0):
+        movies = self.get_movies_ids_list(ids_list=modified_persons_id, offset=offset)
         if not movies:
+            self.offset = 0
             return
-        movies_ids = tuple([movie['id'] for movie in movies])
-        all_data = self._get_data_from_db('all_tables', movies_ids)
+        movies_ids = tuple([str(movie['id']) for movie in movies])
+        all_data = self._get_movies_data(movies_ids)
         return all_data
+
 
 
     def _get_persons_from_db(self, limit: int):
@@ -146,44 +157,56 @@ class ExtractPerson(BaseExtractor):
         return data
     
 
-    def _get_data_from_db(self, table_name: str, ids_list: list):
-        statement = self._get_statement(table_name=table_name, ids_list=ids_list)
+
+
+    def get_movies_ids_list(self, ids_list: list, offset):
+        statement = f"""
+                        SELECT DISTINCT fw.id, fw.modified
+                        FROM content.film_work fw
+                        LEFT JOIN content.person_film_work pfw ON pfw.film_work_id = fw.id
+                        WHERE pfw.person_id IN {ids_list}
+                        ORDER BY fw.modified
+                        LIMIT 100
+                        OFFSET {offset};
+                        """
+
         data = self.database.make_query(statement)
         return data
         
 
-    def _get_statement(self, table_name: str, ids_list: list, modified_date: str = None):
-        statements = {
-            'movies' : f"""
-                        SELECT DISTINCT fw.id, fw.modified
-                        FROM content.film_work fw
-                        LEFT JOIN content.person_film_work pfw ON pfw.film_work_id = fw.id
-                        WHERE pfw.person_id IN {ids_list} AND fw.modified > {modified_date or '1111.11.11'}
-                        ORDER BY fw.modified
-                        LIMIT 100;
-                        """,
-            'all_tables': f"""
-                        SELECT
-                            fw.id as fw_id, 
-                            fw.title, 
-                            fw.description, 
-                            fw.rating, 
-                            fw.type, 
-                            fw.created, 
-                            fw.modified, 
-                            pfw.role, 
-                            p.id, 
-                            p.full_name,
-                            g.name
-                        FROM content.film_work fw
-                        LEFT JOIN content.person_film_work pfw ON pfw.film_work_id = fw.id
-                        LEFT JOIN content.person p ON p.id = pfw.person_id
-                        LEFT JOIN content.genre_film_work gfw ON gfw.film_work_id = fw.id
-                        LEFT JOIN content.genre g ON g.id = gfw.genre_id
-                        WHERE fw.id IN {ids_list}; 
-                        """
-            }
-        return statements[table_name]
+    # def _get_statement(self, table_name: str, ids_list: list, ofset: int):
+    #     statements = {
+    #         'movies' : f"""
+    #                     SELECT DISTINCT fw.id, fw.modified
+    #                     FROM content.film_work fw
+    #                     LEFT JOIN content.person_film_work pfw ON pfw.film_work_id = fw.id
+    #                     WHERE pfw.person_id IN {ids_list}
+    #                     ORDER BY fw.modified
+    #                     LIMIT 100
+    #                     OFSET {ofset};
+    #                     """,
+    #         'all_tables': f"""
+    #                     SELECT
+    #                         fw.id as fw_id, 
+    #                         fw.title, 
+    #                         fw.description, 
+    #                         fw.rating, 
+    #                         fw.type, 
+    #                         fw.created, 
+    #                         fw.modified, 
+    #                         pfw.role, 
+    #                         p.id, 
+    #                         p.full_name,
+    #                         g.name
+    #                     FROM content.film_work fw
+    #                     LEFT JOIN content.person_film_work pfw ON pfw.film_work_id = fw.id
+    #                     LEFT JOIN content.person p ON p.id = pfw.person_id
+    #                     LEFT JOIN content.genre_film_work gfw ON gfw.film_work_id = fw.id
+    #                     LEFT JOIN content.genre g ON g.id = gfw.genre_id
+    #                     WHERE fw.id IN {ids_list}; 
+    #                     """
+    #         }
+    #     return statements[table_name]
 
 
 
@@ -197,6 +220,33 @@ class Transform:
         pass
 
 
+class Transform:
+    
+    def prepare_data(self, data: list):
+        result = {}
+        for row in data:
+            current_movie = result.setdefault(str(row['fw_id']), {})
+            if not current_movie:
+                current_movie['title'] = row['title']
+                current_movie['description'] = row['description']
+                current_movie['imdb_rating'] = row['rating']
+                current_movie['genres'] = row['name']
+                current_movie['title'] = row['title']
+                current_movie['description'] = row['description']
+                if row['role'] == 'director':
+                    current_movie.setdefault('directors_names', []).append(row['full_name'])
+                    current_movie.setdefault('directors', {}).update(id=str(row['id']), name=row['full_name'])
+                elif row['role'] == 'actor':
+                    current_movie.setdefault('actors_names', []).append(row['full_name'])
+                    current_movie.setdefault('actors', {}).update(id=str(row['id']), name=row['full_name'])
+                elif ['role'] == 'writer':
+                    current_movie.setdefault('writers_names', []).append(row['full_name'])
+                    current_movie.setdefault('writers', {}).update(id=str(row['id']), name=row['full_name'])
+        return result
+
+
+
+
 
 
 class EtlProcess:
@@ -204,6 +254,10 @@ class EtlProcess:
         self.state = State(storage=JsonStorage('hello.json'))
         self.db = Database(pg_data=dsn)
         self.extractor_person = ExtractPerson(db=self.db, state=self.state)
+        self.transformer = Transform()
+        # возможно вынести название индекса в конфиг и путь к схеме.
+        self.es_loader = ElasticSearchLoader('movies')
+        self.es_loader.create_index(schema='schema.json')
         # extractor_genre = ExtractGenre(db=db, state=state)
         # extract_filmwork = ExtractFilmWork(db=db,state=state)
 
@@ -211,21 +265,30 @@ class EtlProcess:
     def start(self):
         initial = True
         while True:
-            self.process_persons()
+            if not self.process_persons():
+                break
 
 
 
 
     def process_persons(self):
         while True:
-            modified_persons = self.extractor_person.extract_data()
+            modified_persons = self.extractor_person.get_persons_id()
+            if not modified_persons:
+                break
+            offset = 0
             while True:
                 #добавлять время модификации, сохранять.
                 # В стэйте сохранять person_date, genre_date, movies_date и так же временные даты для разовой выборки 
                 data = self.extractor_person.get_movies_data(modified_persons)
+                offset += 100
                 if not data:
+                    print('Вставка закончена')
                     break
-                # Здесь загрузка в ES
+                prepared_data = self.transformer.prepare_data(data)
+                self.es_loader.batch_insert_data(prepared_data)
+                print('Успешно вставлены данные!')
+                
                 
                 
 
@@ -244,7 +307,7 @@ if __name__ == '__main__':
         'dbname': 'postgres',
         'user': 'postgres',
         'password': '123',
-        'host': '172.18.0.3',
+        'host': '172.24.0.3',
         'port': 5432,
     }
 
