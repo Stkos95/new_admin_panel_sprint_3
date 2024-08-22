@@ -9,6 +9,11 @@ from dotenv import load_dotenv
 from state import State, JsonStorage
 from elasticsearch import ElasticSearchLoader
 
+
+
+# Переделать базовый класс экстрактора для выведения туда общих запросов.
+
+
 def backoff(start_sleep_time=0.1, factor=2, border_sleep_time=10):
     def func_wrapper(func):
         @wraps(func)
@@ -56,7 +61,7 @@ class Database:
         self.conn.close()
 
 
-class BaseExtractor(ABC):
+class AbstractExtractor(ABC):
 
     def __init__(self, db: Database, state: State):
         self.database = db
@@ -65,6 +70,33 @@ class BaseExtractor(ABC):
     @abstractmethod
     def extract_data(self):
         pass
+
+
+class BaseExtractor(AbstractExtractor):
+
+    def _get_movies_data(self, movies_ids: list):
+        statement = """
+            SELECT
+                fw.id as fw_id, 
+                fw.title, 
+                fw.description, 
+                fw.rating, 
+                fw.type, 
+                fw.created, 
+                fw.modified, 
+                pfw.role, 
+                p.id, 
+                p.full_name,
+                g.name
+            FROM content.film_work fw
+            LEFT JOIN content.person_film_work pfw ON pfw.film_work_id = fw.id
+            LEFT JOIN content.person p ON p.id = pfw.person_id
+            LEFT JOIN content.genre_film_work gfw ON gfw.film_work_id = fw.id
+            LEFT JOIN content.genre g ON g.id = gfw.genre_id
+            WHERE fw.id IN {ids_list}; 
+            """
+        return self.database.make_query(statement=statement)
+    
 
 class ExtractFilmWork(BaseExtractor):
     pass
@@ -120,13 +152,13 @@ class ExtractPerson(BaseExtractor):
         return data
         
 
-    def _get_statement(self, table_name: str, ids_list: list):
+    def _get_statement(self, table_name: str, ids_list: list, modified_date: str = None):
         statements = {
             'movies' : f"""
                         SELECT DISTINCT fw.id, fw.modified
                         FROM content.film_work fw
                         LEFT JOIN content.person_film_work pfw ON pfw.film_work_id = fw.id
-                        WHERE pfw.person_id IN {ids_list}
+                        WHERE pfw.person_id IN {ids_list} AND fw.modified > {modified_date or '1111.11.11'}
                         ORDER BY fw.modified
                         LIMIT 100;
                         """,
@@ -177,14 +209,19 @@ class EtlProcess:
 
     
     def start(self):
+        initial = True
         while True:
             self.process_persons()
+
+
+
 
     def process_persons(self):
         while True:
             modified_persons = self.extractor_person.extract_data()
             while True:
                 #добавлять время модификации, сохранять.
+                # В стэйте сохранять person_date, genre_date, movies_date и так же временные даты для разовой выборки 
                 data = self.extractor_person.get_movies_data(modified_persons)
                 if not data:
                     break
