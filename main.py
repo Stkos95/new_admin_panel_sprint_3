@@ -1,14 +1,13 @@
-import psycopg
-from psycopg.rows import dict_row
-from abc import ABC, abstractmethod
+import datetime
 import os
+import time
+import psycopg
+from functools import wraps
+from abc import ABC, abstractmethod
+from psycopg.rows import dict_row
 from dotenv import load_dotenv
 from state import State, JsonStorage
-from psycopg.rows import dict_row
-import datetime
-from contextlib import contextmanager
-import time
-from functools import wraps
+from elasticsearch import ElasticSearchLoader
 
 def backoff(start_sleep_time=0.1, factor=2, border_sleep_time=10):
     def func_wrapper(func):
@@ -74,22 +73,35 @@ class ExtractPerson(BaseExtractor):
     
     def extract_data(self):
             modified_persons = self._get_persons_from_db(50)
-            if not modified_persons:
-                return
+            # if not modified_persons:
+            #     return
             modified_persons_id = tuple([person['id'] for person in modified_persons])
-            movies_state = self.state.get_storage('person_movies')
-            movies = self._get_data_from_db('movies', ids_list=modified_persons_id)
-            self.state.save_storage('person_movies', str(movies[-1].get('modified')))
-            movies_ids = tuple([movie['id'] for movie in movies])
-            all_data = self._get_data_from_db('all_tables', movies_ids)
-            try:
-                date = modified_persons[-1]['modified']
-                self.state.save_storage('person', str(date))
-            except:
-                pass
-            return all_data
+            return modified_persons_id
+            # movies_state = self.state.get_storage('person_movies')
+            # movies = self._get_data_from_db('movies', ids_list=modified_persons_id)
+            # self.state.save_storage('person_movies', str(movies[-1].get('modified')))
+            # movies_ids = tuple([movie['id'] for movie in movies])
+            # all_data = self._get_data_from_db('all_tables', movies_ids)
+            # try:
+            #     date = modified_persons[-1]['modified']
+            #     self.state.save_storage('person', str(date))
+            # except:
+            #     pass
+            # return all_data
 
+    
+    def get_persons_id(self):
+        modified_persons = self._get_persons_from_db(50)
+        modified_persons_id = tuple([person['id'] for person in modified_persons])
+        return modified_persons_id
 
+    def get_movies_data(self, modified_persons_id):
+        movies = self._get_data_from_db('movies', ids_list=modified_persons_id)
+        if not movies:
+            return
+        movies_ids = tuple([movie['id'] for movie in movies])
+        all_data = self._get_data_from_db('all_tables', movies_ids)
+        return all_data
 
 
     def _get_persons_from_db(self, limit: int):
@@ -111,7 +123,7 @@ class ExtractPerson(BaseExtractor):
     def _get_statement(self, table_name: str, ids_list: list):
         statements = {
             'movies' : f"""
-                        SELECT fw.id, fw.modified
+                        SELECT DISTINCT fw.id, fw.modified
                         FROM content.film_work fw
                         LEFT JOIN content.person_film_work pfw ON pfw.film_work_id = fw.id
                         WHERE pfw.person_id IN {ids_list}
@@ -143,10 +155,6 @@ class ExtractPerson(BaseExtractor):
 
 
 
-
-
-
-
 class ExtractGenre(BaseExtractor):
     pass
 
@@ -160,10 +168,38 @@ class Transform:
 
 
 class EtlProcess:
+    def __init__(self):
+        self.state = State(storage=JsonStorage('hello.json'))
+        self.db = Database(pg_data=dsn)
+        self.extractor_person = ExtractPerson(db=self.db, state=self.state)
+        # extractor_genre = ExtractGenre(db=db, state=state)
+        # extract_filmwork = ExtractFilmWork(db=db,state=state)
 
     
     def start(self):
+        while True:
+            self.process_persons()
+
+    def process_persons(self):
+        while True:
+            modified_persons = self.extractor_person.extract_data()
+            while True:
+                #добавлять время модификации, сохранять.
+                data = self.extractor_person.get_movies_data(modified_persons)
+                if not data:
+                    break
+                # Здесь загрузка в ES
+                
+                
+
+
+
+
+    def process_movies(self):
         pass
+
+    # def process_persons(self):
+    #     pass
     
 
 if __name__ == '__main__':
@@ -174,26 +210,29 @@ if __name__ == '__main__':
         'host': '172.18.0.3',
         'port': 5432,
     }
-    state = State(storage=JsonStorage('hello.json'))
-    db = Database(pg_data=dsn)
 
-    extractor_person = ExtractPerson(db=db, state=state)
-    # extractor_genre = ExtractGenre(db=db, state=state)
-    # extract_filmwork = ExtractFilmWork(db=db,state=state)
+    etl = EtlProcess()
+    etl.process_persons()
 
-    while True:
 
-        try:
-            data = extractor_person.extract_data()
-            print(data[0])
-            db.close_connection()
-            break
+    # while True:
+
+    #     try:
+    #         modified_persons = extractor_person.extract_data()
+    #         if modified_persons:
+    #             movies_
+    #                     # movies = self._get_data_from_db('movies', ids_list=modified_persons_id)
+    #         # self.state.save_storage('person_movies', str(movies[-1].get('modified')))
+    #         # movies_ids = tuple([movie['id'] for movie in movies])
+
+    #         db.close_connection()
+    #         break
             
 
-        except KeyboardInterrupt:
-            db.close_connection()
+    #     except KeyboardInterrupt:
+    #         db.close_connection()
 
-        # try:
+    #     # try:
         #     for extractor in [extractor_person, extractor_genre, extract_filmwork]:
         #         data_to_load = extractor.extract_data(limit=20)
         #         if not data_to_load:

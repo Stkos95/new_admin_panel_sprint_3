@@ -13,16 +13,59 @@ state = """{
 
 # with open('schema.json', 'r') as file:
 #     schema = json.load(file)
-# r = requests.put(url='http://127.0.0.1:9200/movies', headers={'Content-Type': 'application/json'}, data=json.dumps(schema))
+# r = requests.put(url='http://127.0.0.1:9200/movies3', headers={'Content-Type': 'application/json'}, data=state)
+# print(json.loads(r.text))
+
+{
+}
+
+dd = '''{
+    "text_field": "my pretty text",
+    "number": 15
+}'''
+# r = requests.post('http://127.0.0.1:9200/movies3/_search/', headers={'Content-Type': 'application/json'})
+# r = requests.post('http://127.0.0.1:9200/movies3/_doc/1213', headers={'Content-Type': 'application/json'}, data = dd)
+# print()
 # print(json.loads(r.text))
 
 
-z = """
-    {
-        "actors_names": ["1", "2"]
-    }
+class ElasticSearchLoader:
+    
+    def __init__(self, index_name, path_scheme: str = None):
+        self.index = index_name
 
-"""
+    def _load_schema(self, path_file: str) -> str:
+        with open(path_file, 'r') as file:
+            schema = file.read()
+        return schema
 
-r = requests.post('http://127.0.0.1:9200/movies/_doc/', headers={'Content-Type': 'application/json'}, data = z)
-print(json.loads(r.text))
+    def create_index(self, schema: str, index_name: str):
+        url = f'http://127.0.0.1:9200/{index_name}/'
+        r = self._send_request('put', url, headers={'Content-Type': 'application/json'}, data=schema)
+        if r.get('status') == 400:
+            #logger 
+            print('Индекс уже создан.')
+
+    def insert_data(self, data: dict):
+        url = f'http://127.0.0.1:9200/{self.index_name}/_doc/'
+        return self._send_request('post', url, headers={'Content-Type': 'application/json'}, data=data)
+    
+    def update_data(self, indx: str, data: dict):
+        url = f'http://127.0.0.1:9200/{self.index_name}/_doc/{indx}/'
+        return self._send_request('post', url, headers={'Content-Type': 'application/json'}, data=data) 
+
+
+
+
+
+    def _send_request(self, method: str, url: str, **kwargs):
+        r = requests.request(method, url, **kwargs)
+        return json.loads(r.text)
+    
+    
+# if __name__ == '__main__':
+    # es = ElasticSearchLoader()
+    # es.create_index('./schema.json', 'new')
+
+
+
