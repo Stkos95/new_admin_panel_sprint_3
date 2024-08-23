@@ -58,7 +58,8 @@ class ElasticSearchLoader:
     def batch_insert_data(self, data: dict):
         url = f'http://127.0.0.1:9200/_bulk?filter_path=items.*.error'
         prepared_data = self.create_statement_bach_insert(data)
-        return self._send_request('post', url, headers={'Content-Type': 'application/x-ndjson'}, data=prepared_data)
+        response = self._send_request('post', url, headers={'Content-Type': 'application/x-ndjson'}, data=prepared_data)
+        return response.get('errors')
 
     
     def create_statement_bach_insert(self, data: dict):

@@ -1,4 +1,18 @@
 services:
+
+
+
+  script:
+    container_name: 'script'
+    image: my_script
+    build: .
+    depends_on:
+      - postgres
+      - elasticsearch
+    restart: on_failure
+    networks:
+      - etl_network
+
   postgres:
     container_name: 'postgres'
     image: postgres:latest
@@ -10,6 +24,8 @@ services:
       - POSTGRES_PASSWORD=123
       - POSTGRES_USER=postgres
       - POSTGRES_DB=postgres
+    networks:
+      - etl_network
 
   elasticsearch:
     container_name: elastic
@@ -19,4 +35,10 @@ services:
       - discovery.type=single-node
     ports:
       - 9200:9200
+    networks:
+      - etl_network
+
+networks:
+  etl_network:
+    name: etl_network
   

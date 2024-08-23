@@ -1,0 +1,6 @@
+__pycache__/*
+.venv/*
+.gitignore
+database_dump.sql
+docker-compose.yml
+Dockerfile
