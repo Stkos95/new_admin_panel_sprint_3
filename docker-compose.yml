@@ -2,16 +2,16 @@ services:
 
 
 
-  script:
-    container_name: 'script'
-    image: my_script
-    build: .
-    depends_on:
-      - postgres
-      - elasticsearch
-    restart: on_failure
-    networks:
-      - etl_network
+  # script:
+  #   container_name: 'script'
+  #   image: my_script
+  #   build: .
+  #   depends_on:
+  #     - postgres
+  #     - elasticsearch
+  #   restart: on_failure
+  #   networks:
+  #     - etl_network
 
   postgres:
     container_name: 'postgres'
@@ -33,6 +33,7 @@ services:
     environment:
       - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
       - discovery.type=single-node
+      - xpack.security.enabled=false
     ports:
       - 9200:9200
     networks:

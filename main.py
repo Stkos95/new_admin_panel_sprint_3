@@ -7,11 +7,16 @@ from abc import ABC, abstractmethod
 from psycopg.rows import dict_row
 from dotenv import load_dotenv
 from state import State, JsonStorage
-from elasticsearch import ElasticSearchLoader
+from elasticsearch1 import ElasticSearchLoader
 import logging
+from requests.exceptions import ConnectionError
 
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
 formatter = logging.Formatter(fmt='[%(asctime)s: %(levelname)s] - %(message)s')
+handler = logging.StreamHandler()
+handler.setFormatter(formatter)
+logger.addHandler(handler)
 
 
 
@@ -26,16 +31,18 @@ def backoff(start_sleep_time=0.1, factor=2, border_sleep_time=10):
             counter = 0
             while True:
                 try:
-                    res = func(instance, *args, **kwargs)
-                    return res
+                    # (psycopg.OperationalError, ConnectionError) 
+                    return func(instance, *args, **kwargs)
                 except Exception as e:
+                    print(e)
                     time_to_sleep = start_sleep_time * (factor ** counter) 
                     if time_to_sleep > border_sleep_time:
                         time_to_sleep = border_sleep_time
                     logger.info(f'Пробую подключиться к базе данных повторно повторно. Жду {time_to_sleep}')
                     counter += 1
                     time.sleep(time_to_sleep)
-                    instance.conn = instance.get_connection()          
+                except KeyboardInterrupt:
+                    exit() 
         return inner
     return func_wrapper
 
@@ -48,23 +55,29 @@ class Database:
         self.conn = self.get_connection(timeout=20)
         
             
-    @backoff()
-    def make_query(self, statement: str, **kwargs):
-                cursor = self.conn.cursor()
-                cursor.execute(statement)
-                data = cursor.fetchall()
-                return data
+    
+    def make_query(self, statement: str, timeout: int = 1, **kwargs):
+                while timeout > 0:
+                    try:
+                        cursor = self.conn.cursor()
+                        cursor.execute(statement)
+                        data = cursor.fetchall()
+                        return data
+                    except Exception as e:
+                        print(e)
+                        print('here')
+                        time.sleep(timeout)
+                        timeout -= 1
+                        self.conn = self.get_connection()
+                return 
+                    
 
-    # Получить таймаут из енва и сделать ожидание таймаута.
+
+    @backoff()
     def get_connection(self, timeout: int = 3):
         logger.info('Подключение к Postgres.')
-        while timeout >= 0:
-            try:
-                conn = psycopg.connect(**self.pg_data, row_factory=dict_row)
-                logger.info('подключено успешно.')
-            except:
-                timeout -= 1
-
+        conn = psycopg.connect(**self.pg_data, row_factory=dict_row)
+        logger.info('подключено успешно.')
         return conn
 
 
@@ -82,15 +95,14 @@ class AbstractExtractor(ABC):
     def extract_data(self):
         pass
 
-    @abstractmethod
-    def get_movies_ids_list(self):
-        pass
+    # @abstractmethod
+    # def get_movies_ids_list(self):
+    #     pass
 
 
 class BaseExtractor(AbstractExtractor):
 
     def _get_movies_data(self, movies_ids: list):
-        print(movies_ids)
         movies_ids = '( ' + ', '.join([f"'{mov}'" for mov in movies_ids ]) + ' )'
         statement = f"""
             SELECT
@@ -115,38 +127,45 @@ class BaseExtractor(AbstractExtractor):
         return self.database.make_query(statement=statement)
     
 
+    # def get_movies_data(self, modified_items_ids: list, modified_date: str, statement: str):
+    #     movies = self.get_movies_list(statement=statement)
+    #     if not movies:
+    #         return
+    #     movies_ids = tuple([str(movie['id']) for movie in movies])
+    #     all_data = self._get_movies_data(movies_ids)
+    #     return all_data
+    
+    def get_movies_data(self, movies: list) -> dict:
+        movies_ids = tuple([str(movie['id']) for movie in movies])
+        all_data = self._get_movies_data(movies_ids)
+        return all_data
+
+    
+
 
 
 class ExtractFilmWork(BaseExtractor):
     
     def extract_data(self):
-        statement = '''SELECT id, modified FROM "content"."film_work"
-                        WHERE modified > {modified_data}
-                        ORDER BY modified
-                        LIMIT 100;
-        '''
-        movies = self.database.make_query(statement)
-
-
-    def get_movies_ids_list(self, modified_date: str):
+        current_state = self.state.get_storage('film_work') or '1111-11-11'
         statement = f'''SELECT id, modified FROM "content"."film_work"
-                        WHERE modified > '{modified_date}'
+                        WHERE modified > '{current_state}'
                         ORDER BY modified
                         LIMIT 100;
         '''
-        movies = self.database.make_query(statement)
-        return movies
+        return self.database.make_query(statement)
+
+    # def get_movies_ids_list(self, statement: str):
+
+    #     # statement = f'''SELECT id, modified FROM "content"."film_work"
+    #     #                 WHERE modified > '{modified_date}'
+    #     #                 ORDER BY modified
+    #     #                 LIMIT 100;
+    #     # '''
+
+    #     movies = self.database.make_query(statement)
+    #     return movies
         
-
-    def get_movies_data(self, modified_date: str):
-        movies = self.get_movies_ids_list(modified_date=modified_date)
-        if not movies:
-            return
-        movies_ids = tuple([str(movie['id']) for movie in movies])
-        all_data = self._get_movies_data(movies_ids)
-        return all_data
-
-
 
 class ExtractPerson(BaseExtractor):
 
@@ -155,25 +174,25 @@ class ExtractPerson(BaseExtractor):
         super().__init__(*args, **kwargs)
     
     def extract_data(self):
-            modified_persons = self._get_persons_from_db(50)
-            modified_persons_id = tuple([person['id'] for person in modified_persons])
-            return modified_persons_id
-
-
-    
-    def get_persons_id(self):
-        modified_persons = self._get_persons_from_db(100)
+        modified_persons = self._get_persons_from_db(500)
         return modified_persons
 
+    
+    def get_movies_list(self, modified_items_ids: tuple, modified_date: str):
+        statement = f"""
+                        SELECT DISTINCT fw.id, fw.modified
+                        FROM content.film_work fw
+                        LEFT JOIN content.person_film_work pfw ON pfw.film_work_id = fw.id
+                        WHERE pfw.person_id IN {modified_items_ids} AND fw.modified > '{modified_date}'
+                        ORDER BY fw.modified
+                        LIMIT 100;
+                        """
+        return self.database.make_query(statement)
 
-    def get_movies_data(self, modified_persons_id: list, offset: int = 0):
-        movies = self.get_movies_ids_list(ids_list=modified_persons_id, offset=offset)
-        if not movies:
-            self.offset = 0
-            return
-        movies_ids = tuple([str(movie['id']) for movie in movies])
-        all_data = self._get_movies_data(movies_ids)
-        return all_data
+    def get_total(self):
+        return self.database.make_query('select count(*) from "content"."person";')
+
+
 
     # возможно принимать дату статуса, чтобы каждый раз не бегать в файл.
     def _get_persons_from_db(self, limit: int):
@@ -186,75 +205,74 @@ class ExtractPerson(BaseExtractor):
         return data
     
 
-    def get_movies_ids_list(self, ids_list: list, offset: int):
-        statement = f"""
-                        SELECT DISTINCT fw.id, fw.modified
-                        FROM content.film_work fw
-                        LEFT JOIN content.person_film_work pfw ON pfw.film_work_id = fw.id
-                        WHERE pfw.person_id IN {ids_list}
-                        ORDER BY fw.modified
-                        LIMIT 100
-                        OFFSET {offset};
-                        """
-
-        data = self.database.make_query(statement)
-        return data
-        
 
 class ExtractGenre(BaseExtractor):
 
     # возможно принимать дату статуса, чтобы каждый раз не бегать в файл.
-    def _get_genres_from_db(self, limit: int):
-        current_state = self.state.get_storage('person')
+    def _get_genres_from_db(self, limit: int, modified_date: str = None):
+        if not modified_date:
+            current_state = self.state.get_storage('genre')
         if not current_state:
-            statement = f'SELECT id, modified FROM "content"."genres" ORDER BY modified LIMIT {limit}'
+            statement = f'SELECT id, modified FROM "content"."genre" ORDER BY modified LIMIT {limit}'
         else:
-            statement = f'SELECT id, modified FROM "content"."genres" WHERE modified > \'{current_state}\' ORDER BY modified LIMIT {limit};'
+            statement = f'SELECT id, modified FROM "content"."genre" WHERE modified > \'{current_state}\' ORDER BY modified LIMIT {limit};'
         data = self.database.make_query(statement)
         return data
 
 
-    def get_movies_ids_list(self, ids_list: list, offset: int) -> dict:
+    def get_movies_list(self, modified_items_ids: tuple, modified_date: str):
         statement = f"""
                 SELECT DISTINCT fw.id, fw.modified
                 FROM content.film_work fw
                 LEFT JOIN content.genre_film_work pfw ON pfw.film_work_id = fw.id 
-                WHERE pfw.genre_id IN {ids_list}
+                WHERE pfw.genre_id IN {modified_items_ids} AND fw.modified > '{modified_date}'
                 ORDER BY fw.modified
-                LIMIT 100
-                OFFSET {offset};
+                LIMIT 100;
                 """
-        data = self.database.make_query(statement)
-        return data
+        return self.database.make_query(statement)
 
-class Transform:
-    
-    def prepare_data(self, data: list):
-        pass
 
+    def extract_data(self, modified_date: str = None):
+        return self._get_genres_from_db(100, modified_date)
 
 class Transform:
     
     def prepare_data(self, data: list):
         result = {}
+        # result = []
         for row in data:
             current_movie = result.setdefault(str(row['fw_id']), {})
+            # print(current_movie)
             if not current_movie:
-                current_movie['title'] = row['title']
-                current_movie['description'] = row['description']
-                current_movie['imdb_rating'] = row['rating']
-                current_movie['genres'] = row['name']
-                current_movie['title'] = row['title']
-                current_movie['description'] = row['description']
-                if row['role'] == 'director':
-                    current_movie.setdefault('directors_names', []).append(row['full_name'])
-                    current_movie.setdefault('directors', {}).update(id=str(row['id']), name=row['full_name'])
-                elif row['role'] == 'actor':
-                    current_movie.setdefault('actors_names', []).append(row['full_name'])
-                    current_movie.setdefault('actors', {}).update(id=str(row['id']), name=row['full_name'])
-                elif ['role'] == 'writer':
-                    current_movie.setdefault('writers_names', []).append(row['full_name'])
-                    current_movie.setdefault('writers', {}).update(id=str(row['id']), name=row['full_name'])
+                current_movie['id'] = str(row['fw_id'])
+                current_movie['title'] = str(row['title'])
+                current_movie['description'] = str(row['description'])
+                current_movie['imdb_rating'] = row['rating'] or 0
+                # current_movie['genres'] = str(row['name'])
+
+                current_movie['title'] = str(row['title'])
+                current_movie['description'] = str(row['description'])
+                for role in ('directors', 'actors', 'writers'):
+                    current_movie[role] = []
+                    current_movie[f'{role}_names'] = []
+            current_movie.setdefault('genres', []).append(str(row['name']))
+            role = row['role']
+            if role == 'director':
+                directors_name = current_movie.setdefault('directors_names', [])
+                if str(row['full_name']) not in directors_name:
+                    directors_name.append(str(row['full_name']))
+                    current_movie.setdefault('directors', []).append(dict(id=str(row['id']), name=str(row['full_name'])))
+            elif role == 'actor':
+                actors_name = current_movie.setdefault('actors_names', [])
+                if str(row['full_name']) not in actors_name:
+                    actors_name.append(str(row['full_name']))
+                    current_movie.setdefault('actors', []).append(dict(id=str(row['id']), name=str(row['full_name'])))
+            elif role == 'writer':
+                writers_name = current_movie.setdefault('writers_names', [])
+                if str(row['full_name']) not in writers_name:
+                    writers_name.append(str(row['full_name']))
+                    current_movie.setdefault('writers', []).append(dict(id=str(row['id']), name=str(row['full_name'])))
+        result = list(result.values())
         return result
 
 
@@ -267,28 +285,27 @@ class EtlProcess:
         # возможно вынести название индекса в конфиг и путь к схеме.
         self.es_loader = ElasticSearchLoader('movies')
         self.es_loader.create_index(schema='schema.json')
-        # extractor_genre = ExtractGenre(db=db, state=state)
+        self.extractor_genre = ExtractGenre(db=self.db, state=self.state)
         self.extractor_filmwork = ExtractFilmWork(db=self.db,state=self.state)
 
         self.extractors = {
+            'film_work': self.extractor_filmwork,
             'person': self.extractor_person,
             'genre': self.extractor_genre,
-            'film_work': self.extractor_filmwork
         }
 
     
     def start(self):
         logger.info('Процесс запущен.')
-        initial_state = True if not self.state.get_storage('movies') else False
         while True:
-            try:
-                self.process_film_work()
-                if initial_state:
-                    initial_state = False
-                    continue
-                not self.process_persons()
-            except:
-                self.db.close_connection()
+            for extractor in self.extractors:
+                try:
+                    self.universal_process(extractor)
+                except KeyboardInterrupt as e:
+                    print(e)
+                    self.db.close_connection()
+                    exit()
+            logger.info('Итерация завершена!')
             
 
 
@@ -306,57 +323,46 @@ class EtlProcess:
         logger.info(f'Началась обработка таблицы: {table_name}')
         counter = 0
         while True:
-            # ВСЕТАКИ ПРИВЕСТИ К ОДНОМУ МЕТОДУ
-            rows = self.extractors[table_name].get_persons_id()
+            time.sleep(1)
+            is_go = True
+            self.state.save_storage('tmp_date', '111-11-11')
+            rows = self.extractors[table_name].extract_data()
             if not rows:
                 break
             logger.info(f'Из таблицы {table_name} получено {len(rows)} пользователей')
-            rows_id = [row['id'] for row in rows]
-            offset = 0
-            while True:
-                data = self.extractors[table_name].get_movies_data(rows_id)
-                offset += 100
-                if not data:
-                    logger.info(f'Из базы {table_name} были получены все данные.')
+            rows_id = tuple(row['id'] for row in rows)
+            while is_go:
+                tmp_date = self.state.get_storage('tmp_date')
+                if table_name != 'film_work':
+                    movies_list = self.extractors[table_name].get_movies_list(rows_id, tmp_date)
+                    if not movies_list:
+                        break
+                    data = self.extractors[table_name].get_movies_data(movies_list)
+                    
+                    prepared_data = self.transformer.prepare_data(data)
+                    
+                    for row in prepared_data:
+                        record = self.es_loader.search_field(row['id'])['hits']
+
+                        if record['total']['value'] != 0:
+                            
+                            record_id = record['hits'][0]['_id']
+                            z = self.es_loader.client.update(index=self.es_loader.index, id=record_id, doc=row)
+                            print(z)
+                else:
+                    movies_list = rows
+                    is_go = False
+                    data = self.extractors[table_name].get_movies_data(movies_list)
+                    prepared_data = self.transformer.prepare_data(data)
+                    d = self.es_loader.batch_insert_data(prepared_data)
+                if not movies_list:
                     break
-                prepared_data = self.transformer.prepare_data(data)
-                self.es_loader.batch_insert_data(prepared_data)
-                logger.info(f'Успешно загружено {len(prepared_data)} документов')
+
+                logger.info(f'Успешно загружено {len(movies_list)} документов')
+                self.state.save_storage('tmp_date', str(data[-1]['modified']))
             self.state.save_storage(table_name, str(rows[-1]['modified']))
             counter += len(rows)
-            logger.info(f'Всего успешно обработано {counter} записей из таблицы {table_name}.')
-
-
-
-
-
-    # def process_persons(self):
-    #     logger.info('Началась обработка измененных пользователей')
-    #     counter = 0
-    #     while True:
-    #         modified_persons = self.extractor_person.get_persons_id()
-    #         if not modified_persons:
-    #             break
-    #         logger.info(f'Из базы получено {len(modified_persons)} пользователей')
-    #         modified_persons_id = tuple(person['id'] for person in modified_persons)
-    #         offset = 0
-    #         while True:
-
-    #             #добавлять время модификации, сохранять.
-    #             # В стэйте сохранять person_date, genre_date, movies_date и так же временные даты для разовой выборки 
-    #             data = self.extractor_person.get_movies_data(modified_persons_id)
-    #             offset += 100
-    #             if not data:
-    #                 print('Вставка закончена')
-    #                 break
-    #             prepared_data = self.transformer.prepare_data(data)
-    #             self.es_loader.batch_insert_data(prepared_data)
-    #             logger.info(f'Успешно загружено {len(prepared_data)} документов')
-    #         self.state.save_storage(str(modified_persons[-1]['modified']))
-    #         counter += len(modified_persons)
-    #         logger.info(f'Успешно обработано {counter} записей из таблицы person.')
-            
-                
+            logger.info(f'Всего успешно обработано {counter} из  записей из таблицы {table_name}.')
 
 
 if __name__ == '__main__':
@@ -364,7 +370,7 @@ if __name__ == '__main__':
         'dbname': 'postgres',
         'user': 'postgres',
         'password': '123',
-        'host': '172.18.0.3',
+        'host': '127.0.0.1',
         'port': 5432,
     }
 
