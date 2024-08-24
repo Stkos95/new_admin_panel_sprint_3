@@ -13,4 +13,4 @@ RUN apt-get update && apt-get install -y --no-install-recommends gcc \
 
 COPY . .
 
-CMD ["python3", ["main.py"]]
+CMD ["python3", "main.py"]
