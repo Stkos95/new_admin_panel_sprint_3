@@ -255,7 +255,9 @@ class Transform:
                 for role in ('directors', 'actors', 'writers'):
                     current_movie[role] = []
                     current_movie[f'{role}_names'] = []
-            current_movie.setdefault('genres', []).append(str(row['name']))
+            genres = current_movie.setdefault('genres', [])
+            if row['name'] not in genres:
+                genres.append(str(row['name']))
             role = row['role']
             if role == 'director':
                 directors_name = current_movie.setdefault('directors_names', [])
@@ -272,7 +274,7 @@ class Transform:
                 if str(row['full_name']) not in writers_name:
                     writers_name.append(str(row['full_name']))
                     current_movie.setdefault('writers', []).append(dict(id=str(row['id']), name=str(row['full_name'])))
-        result = list(result.values())
+        # result = list(result.values())
         return result
 
 
@@ -323,13 +325,13 @@ class EtlProcess:
         logger.info(f'Началась обработка таблицы: {table_name}')
         counter = 0
         while True:
-            time.sleep(1)
+            time.sleep(0.5)
             is_go = True
-            self.state.save_storage('tmp_date', '111-11-11')
+            self.state.save_storage('tmp_date', '1111-11-11')
             rows = self.extractors[table_name].extract_data()
             if not rows:
                 break
-            logger.info(f'Из таблицы {table_name} получено {len(rows)} пользователей')
+            logger.info(f'Из таблицы {table_name} получено {len(rows)} записей')
             rows_id = tuple(row['id'] for row in rows)
             while is_go:
                 tmp_date = self.state.get_storage('tmp_date')
@@ -341,14 +343,9 @@ class EtlProcess:
                     
                     prepared_data = self.transformer.prepare_data(data)
                     
-                    for row in prepared_data:
-                        record = self.es_loader.search_field(row['id'])['hits']
-
-                        if record['total']['value'] != 0:
-                            
-                            record_id = record['hits'][0]['_id']
-                            z = self.es_loader.client.update(index=self.es_loader.index, id=record_id, doc=row)
-                            print(z)
+                    for _id, row in prepared_data.items():
+                        
+                            z = self.es_loader.client.update(index=self.es_loader.index, id=_id, doc=row)
                 else:
                     movies_list = rows
                     is_go = False
@@ -357,7 +354,6 @@ class EtlProcess:
                     d = self.es_loader.batch_insert_data(prepared_data)
                 if not movies_list:
                     break
-
                 logger.info(f'Успешно загружено {len(movies_list)} документов')
                 self.state.save_storage('tmp_date', str(data[-1]['modified']))
             self.state.save_storage(table_name, str(rows[-1]['modified']))

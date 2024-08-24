@@ -2,6 +2,7 @@ import requests
 import json
 import elasticsearch
 from elasticsearch import helpers
+import time
 state = """{
     "mappings": {
         "properties": {
@@ -64,8 +65,8 @@ class ElasticSearchLoader:
 
 
     def batch_insert_data(self, data: dict):
-        # prepared_data = self.create_statement_bach_insert(data)
-        return helpers.bulk(self.client, data, index=self.index)
+        prepared_data = self.create_statement_bach_insert(data)
+        return helpers.bulk(self.client, prepared_data, index=self.index)
 
 
     # def batch_insert_data(self, data: dict):
@@ -85,9 +86,10 @@ class ElasticSearchLoader:
     def create_statement_bach_insert(self, data: dict):
         prepared_data = []
         for _id, value in data.items():
-            # prepared_data.append({"_id": _id, "_source": value})
-
-            prepared_data.append({"_id": _id, '_source': data})
+            prepared_data.append({"_id": _id, '_index': self.index, "_source": value})
+            # print(prepared_data)
+            # time.sleep(30)
+            # prepared_data.append({"_id": _id, '_source': data})
             # prepared_data.append(value)
         return prepared_data
             
