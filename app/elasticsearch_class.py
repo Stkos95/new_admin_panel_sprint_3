@@ -42,7 +42,7 @@ class ElasticSearchLoader:
             self.client.indices.create(index=self.index, body=schema)
         except RequestError:
             logger.info(
-                f"Пропускаю создание индекса. Индекс с названием {self.index} уже существует."
+                f"Пропускаю создание индекса. Индекс с названием уже существует.", self.index
             )
 
     def bulk_insert_data(self, data: dict) -> dict:

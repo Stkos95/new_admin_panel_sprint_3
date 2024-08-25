@@ -3,11 +3,12 @@ from abc import ABC, abstractmethod
 
 import psycopg
 from backoff import backoff
-from config import load_config
 from elasticsearch_class import ElasticSearchLoader
 from main_logger import MainLogger
 from psycopg.rows import dict_row
 from state import JsonStorage, State
+
+from config import load_config
 
 logger = MainLogger().get_logger("main")
 config = load_config()
@@ -15,11 +16,11 @@ config = load_config()
 
 class Database:
 
-    def __init__(self, pg_data):
+    def __init__(self, pg_data: dict):
         self.pg_data = pg_data
         self.conn = self.get_connection()
 
-    def make_query(self, statement: str, timeout: int = 1) -> dict:
+    def make_query(self, statement: str, timeout: int = 1) -> list | None:
         """Функция выполняет запрос к базе данных.
 
         Args:
@@ -71,7 +72,7 @@ class AbstractExtractor(ABC):
 
 class BaseExtractor(AbstractExtractor):
 
-    def _get_movies_data(self, movies_ids: list) -> dict:
+    def _get_movies_data(self, movies_ids: tuple[str]) -> dict:
         """Функция получает финальные данные по указанным фильмам.
 
         Args:
@@ -279,8 +280,7 @@ class EtlProcess:
             for extractor in self.extractors:
                 try:
                     self.universal_process(extractor)
-                except KeyboardInterrupt as e:
-                    print(e)
+                except KeyboardInterrupt:
                     self.db.close_connection()
                     exit()
             logger.info("Итерация завершена!")
@@ -292,7 +292,7 @@ class EtlProcess:
         Args:
             table_name (str): Название таблицы.
         """
-        logger.info(f"Началась обработка таблицы: {table_name}")
+        logger.info(f"Началась обработка таблицы: %s", table_name)
         counter = 0
         while True:
             time.sleep(0.5)
@@ -301,7 +301,7 @@ class EtlProcess:
             rows = self.extractors[table_name].extract_data()
             if not rows:
                 break
-            logger.info(f"Из таблицы {table_name} получено {len(rows)} записей")
+            logger.info(f"Из таблицы %s получено %s записей", table_name, len(rows))
             rows_id = tuple(row["id"] for row in rows)
             while is_go:
                 tmp_date = self.state.get_storage("tmp_date")
@@ -317,12 +317,12 @@ class EtlProcess:
                 data = self.extractors[table_name].get_movies_data(movies_list)
                 prepared_data = self.transformer.prepare_data(data)
                 self.es_loader.bulk_insert_data(prepared_data)
-                logger.info(f"Успешно загружено {len(movies_list)} документов")
+                logger.info(f"Успешно загружено %s документов", len(movies_list))
                 self.state.save_storage("tmp_date", str(data[-1]["modified"]))
             self.state.save_storage(table_name, str(rows[-1]["modified"]))
             counter += len(rows)
             logger.info(
-                f"Всего успешно обработано {counter} из  записей из таблицы {table_name}."
+                f"Всего успешно обработано %s записей из таблицы %s.", counter, table_name
             )
 
 
@@ -334,5 +334,6 @@ if __name__ == "__main__":
         "host": config.postgres.host,
         "port": config.postgres.port,
     }
+    print(dsn)
     etl = EtlProcess()
     etl.start()

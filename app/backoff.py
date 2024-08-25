@@ -31,7 +31,7 @@ def backoff(start_sleep_time=0.1, factor=2, border_sleep_time=10):
                     if time_to_sleep > border_sleep_time:
                         time_to_sleep = border_sleep_time
                     logger.info(
-                        f"Пробую подключиться к базе данных повторно повторно. Жду {time_to_sleep}"
+                        f"Пробую подключиться к базе данных повторно повторно. Жду %s", time_to_sleep
                     )
                     counter += 1
                     time.sleep(time_to_sleep)
