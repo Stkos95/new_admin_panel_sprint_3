@@ -1,10 +1,8 @@
 services:
 
-
-
   script:
     tty: true
-    container_name: 'script'
+    container_name: script
     image: my_script
     build:
       context: app/
