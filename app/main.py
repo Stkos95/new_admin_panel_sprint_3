@@ -129,10 +129,11 @@ class BaseExtractor(AbstractExtractor):
             list: Список с полученными значениями измененных строк.
         """
         current_state = self.state.get_storage(table_name)
+        print(current_state)
         if not current_state:
-            statement = f'SELECT id, modified FROM "content"."{table_name}" ORDER BY modified LIMIT {config.extractor.limit}'
+            statement = f'SELECT id, modified FROM "content"."{table_name[:-1]}" ORDER BY modified LIMIT {config.extractor.limit}'
         else:
-            statement = f'SELECT id, modified FROM "content"."{table_name}" WHERE modified > \'{current_state}\' ORDER BY modified LIMIT {config.extractor.limit};'
+            statement = f'SELECT id, modified FROM "content"."{table_name[:-1]}" WHERE modified > \'{current_state}\' ORDER BY modified LIMIT {config.extractor.limit};'
         data = self.database.make_query(statement)
         return data
 
@@ -156,7 +157,7 @@ class ExtractPerson(BaseExtractor):
         super().__init__(*args, **kwargs)
 
     def extract_data(self):
-        modified_persons = self._get_data_from_db("person")
+        modified_persons = self._get_data_from_db("persons")
         return modified_persons
 
     def get_movies_list(self, modified_items_ids: tuple, modified_date: str):
@@ -203,10 +204,16 @@ class ExtractGenre(BaseExtractor):
         return self.database.make_query(statement)
 
     def extract_data(self):
-        return self._get_data_from_db("genre")
+        return self._get_data_from_db("genres")
 
 
 class Transform:
+    def __init__(self):
+        self.transformers = {
+            'movies': self.prepare_data_movies,
+            'genres': self.prepare_data_genres,
+            'persons': self.prepare_data_persons
+        }
 
     def prepare_data_movies(self, data: list) -> dict:
         """Функция переводит финальные данные по фильмам в вид для вставки в ES
@@ -258,26 +265,59 @@ class Transform:
         return result
     
     def prepare_data_persons(self, data: list):
-        pass
+        result = {}
+        for row in data:
+            current_person = result.setdefault(str(row['id']), {})
+            if not current_person:
+                current_person['id'] = str(row['id'])
+                current_person['full_name'] = str(row['full_name'])
+            movies = current_person.setdefault('movies_names', [])
+            if row['title'] not in movies:
+
+                current_person.setdefault('movies', []).append({'id': str(row['fw_id']), 'title': row['title'], 'role': row['role']})
+                movies.append(row['title'])
+        return result
+    
 
     def prepare_data_genres(self, data: list):
         pass
 
 
+class MovieIndex:
+    def __init__(self, db, state, es_loader: ElasticSearchLoader):
+        self.index = 'movies'
+
+        es_loader.create_index(self.index)
+
+
+
+class PersonIndex:
+    """SELECT id, full_name from "content"."persons"
+        WHERE modified > date
+
+
+    """
+
 class EtlProcess:
     def __init__(self):
         self.state = State(storage=JsonStorage())
         self.db = Database(pg_data=dsn)
-        self.extractor_person = ExtractPerson(db=self.db, state=self.state)
         self.transformer = Transform()
         self.es_loader = ElasticSearchLoader()
-        self.es_loader.create_index()
+        # self.es_loader_persons = ElasticSearchLoader('persons')
+        # self.es_loader_persons = ElasticSearchLoader('genres')
+
+        self.extractor_person = ExtractPerson(db=self.db, state=self.state)
         self.extractor_genre = ExtractGenre(db=self.db, state=self.state)
         self.extractor_filmwork = ExtractFilmWork(db=self.db, state=self.state)
+        self.es_loader.create_index('movies')
+        self.es_loader.create_index('genres')
+        self.es_loader.create_index('persons')
+    
         self.extractors = {
-            "film_work": self.extractor_filmwork,
-            "person": self.extractor_person,
-            "genre": self.extractor_genre,
+            # "movies": self.extractor_filmwork,
+            "persons": self.extractor_person,
+            # "genres": self.extractor_genre,
         }
 
     def start(self):
@@ -292,6 +332,7 @@ class EtlProcess:
                     exit()
             logger.info("Итерация завершена!")
 
+
     def universal_process(self, table_name: str):
         """Функция принимает название таблицы и производит получение/трансформацию/вставку
             данных.
@@ -302,10 +343,11 @@ class EtlProcess:
         logger.info(f"Началась обработка таблицы: %s", table_name)
         counter = 0
         while True:
-            time.sleep(0.5)
+            time.sleep(2)
             is_go = True
             self.state.save_storage("tmp_date", "1111-11-11")
             rows = self.extractors[table_name].extract_data()
+            print('here')
             if not rows:
                 break
             logger.info(f"Из таблицы %s получено %s записей", table_name, len(rows))
@@ -322,8 +364,10 @@ class EtlProcess:
                 if not movies_list:
                     break
                 data = self.extractors[table_name].get_movies_data(movies_list)
-                prepared_data = self.transformer.prepare_data_movies(data)
-                self.es_loader.bulk_insert_data(prepared_data)
+
+                prepared_data = self.transformer.transformers[table_name](data)
+                z = self.es_loader.bulk_insert_data(prepared_data, table_name)
+                print(z)
                 logger.info(f"Успешно загружено %s документов", len(movies_list))
                 self.state.save_storage("tmp_date", str(data[-1]["modified"]))
             self.state.save_storage(table_name, str(rows[-1]["modified"]))
@@ -341,6 +385,5 @@ if __name__ == "__main__":
         "host": config.postgres.host,
         "port": config.postgres.port,
     }
-    print(dsn)
     etl = EtlProcess()
     etl.start()
