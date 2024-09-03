@@ -94,7 +94,8 @@ class BaseExtractor(AbstractExtractor):
                 pfw.role, 
                 p.id, 
                 p.full_name,
-                g.name
+                g.name,
+                g.id as g_id
             FROM content.film_work fw
             LEFT JOIN content.person_film_work pfw ON pfw.film_work_id = fw.id
             LEFT JOIN content.person p ON p.id = pfw.person_id
@@ -207,7 +208,7 @@ class ExtractGenre(BaseExtractor):
 
 class Transform:
 
-    def prepare_data(self, data: list) -> dict:
+    def prepare_data_movies(self, data: list) -> dict:
         """Функция переводит финальные данные по фильмам в вид для вставки в ES
 
         Args:
@@ -231,7 +232,7 @@ class Transform:
                     current_movie[f"{role}_names"] = []
             genres = current_movie.setdefault("genres", [])
             if row["name"] not in genres:
-                genres.append(str(row["name"]))
+                genres.append({'id': str(row["g_id"]), 'name': str(row["name"])})
             role = row["role"]
             if role == "director":
                 directors_name = current_movie.setdefault("directors_names", [])
@@ -255,6 +256,12 @@ class Transform:
                         dict(id=str(row["id"]), name=str(row["full_name"]))
                     )
         return result
+    
+    def prepare_data_persons(self, data: list):
+        pass
+
+    def prepare_data_genres(self, data: list):
+        pass
 
 
 class EtlProcess:
@@ -315,7 +322,7 @@ class EtlProcess:
                 if not movies_list:
                     break
                 data = self.extractors[table_name].get_movies_data(movies_list)
-                prepared_data = self.transformer.prepare_data(data)
+                prepared_data = self.transformer.prepare_data_movies(data)
                 self.es_loader.bulk_insert_data(prepared_data)
                 logger.info(f"Успешно загружено %s документов", len(movies_list))
                 self.state.save_storage("tmp_date", str(data[-1]["modified"]))
