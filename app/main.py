@@ -129,7 +129,6 @@ class BaseExtractor(AbstractExtractor):
             list: Список с полученными значениями измененных строк.
         """
         current_state = self.state.get_storage(table_name)
-        print(current_state)
         if not current_state:
             statement = f'SELECT id, modified FROM "content"."{table_name[:-1]}" ORDER BY modified LIMIT {config.extractor.limit}'
         else:
@@ -273,14 +272,24 @@ class Transform:
                 current_person['full_name'] = str(row['full_name'])
             movies = current_person.setdefault('movies_names', [])
             if row['title'] not in movies:
-
                 current_person.setdefault('movies', []).append({'id': str(row['fw_id']), 'title': row['title'], 'role': row['role']})
                 movies.append(row['title'])
         return result
     
 
     def prepare_data_genres(self, data: list):
-        pass
+        result = {}
+        for row in data:
+            current_genre = result.setdefault(str(row['g_id']), {})
+            if not current_genre:
+                current_genre['id'] = str(row['g_id'])
+                current_genre['name'] = row['name']
+            movies = current_genre.setdefault('movies_names', [])
+            if row['title'] not in movies:
+                current_genre.setdefault('movies', []).append({'id': str(row['fw_id']), 'title': row['title']})
+                movies.append(row['title'])
+        return result
+
 
 
 class MovieIndex:
@@ -315,9 +324,9 @@ class EtlProcess:
         self.es_loader.create_index('persons')
     
         self.extractors = {
-            # "movies": self.extractor_filmwork,
+            "movies": self.extractor_filmwork,
             "persons": self.extractor_person,
-            # "genres": self.extractor_genre,
+            "genres": self.extractor_genre,
         }
 
     def start(self):
@@ -343,18 +352,16 @@ class EtlProcess:
         logger.info(f"Началась обработка таблицы: %s", table_name)
         counter = 0
         while True:
-            time.sleep(2)
             is_go = True
             self.state.save_storage("tmp_date", "1111-11-11")
             rows = self.extractors[table_name].extract_data()
-            print('here')
             if not rows:
                 break
             logger.info(f"Из таблицы %s получено %s записей", table_name, len(rows))
             rows_id = tuple(row["id"] for row in rows)
             while is_go:
                 tmp_date = self.state.get_storage("tmp_date")
-                if table_name != "film_work":
+                if table_name != "movies":
                     movies_list = self.extractors[table_name].get_movies_list(
                         rows_id, tmp_date
                     )
@@ -364,10 +371,11 @@ class EtlProcess:
                 if not movies_list:
                     break
                 data = self.extractors[table_name].get_movies_data(movies_list)
-
                 prepared_data = self.transformer.transformers[table_name](data)
                 z = self.es_loader.bulk_insert_data(prepared_data, table_name)
-                print(z)
+                if table_name != 'movies':
+                    prepared_data = self.transformer.transformers['movies'](data)
+                    self.es_loader.bulk_insert_data(prepared_data, 'movies')
                 logger.info(f"Успешно загружено %s документов", len(movies_list))
                 self.state.save_storage("tmp_date", str(data[-1]["modified"]))
             self.state.save_storage(table_name, str(rows[-1]["modified"]))

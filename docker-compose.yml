@@ -1,18 +1,18 @@
 services:
 
-  # script:
-  #   tty: true
-  #   container_name: script
-  #   image: my_script
-  #   build:
-  #     context: app/
-  #     dockerfile: Dockerfile
-  #   depends_on:
-  #     - postgres-1
-  #     - elasticsearch
-  #   restart: on-failure
-  #   networks:
-  #     - etl_network
+  script:
+    tty: true
+    container_name: script
+    image: my_script
+    build:
+      context: app/
+      dockerfile: Dockerfile
+    depends_on:
+      - postgres-1
+      - elasticsearch
+    restart: on-failure
+    networks:
+      - etl_network
 
   postgres-1:
     container_name: postgres-2
